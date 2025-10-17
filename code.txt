@@ -1,0 +1,800 @@
+-- This creates a virtual warehouse (computing power)
+CREATE WAREHOUSE IF NOT EXISTS STUDENT_WH
+  WITH WAREHOUSE_SIZE = 'X-SMALL'
+       AUTO_SUSPEND = 60
+       AUTO_RESUME = TRUE
+  COMMENT = 'Warehouse for assignment 3 work';
+
+-- This tells Snowflake to use your warehouse
+USE WAREHOUSE STUDENT_WH;
+
+
+
+
+-- This shows you what role you're using
+SELECT CURRENT_ROLE();
+
+-- This shows you what warehouse you're using  
+SELECT CURRENT_WAREHOUSE();
+
+-- This shows you the current date/time
+SELECT CURRENT_TIMESTAMP();
+
+
+
+
+
+-- ===== SECTION 1: CREATE DATABASES =====
+-- Create the Point-of-Sale database (for in-store transactions)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_POS_DB
+  COMMENT = 'Point of Sale system database for in-store transactions';
+
+-- Create the E-commerce database (for online orders)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_ECOMM_DB
+  COMMENT = 'E-commerce platform database for online orders and customers';
+
+-- Create the Warehouse Management database (for inventory tracking)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_WMS_DB
+  COMMENT = 'Warehouse Management System database for inventory and suppliers';
+
+-- Create the Data Warehouse (for analysis and reporting)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_DW
+  COMMENT = 'Data warehouse implementing medallion architecture for analytics';
+
+
+  SHOW DATABASES;
+
+  
+
+-- ===== SECTION 2: CREATE SCHEMAS =====
+
+-- Create schema in POS database
+USE DATABASE WOOLWORTHS_POS_DB;
+CREATE SCHEMA IF NOT EXISTS POS_TRANSACTIONS
+  COMMENT = 'Schema for point-of-sale transaction data';
+
+-- Create schema in E-commerce database
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+CREATE SCHEMA IF NOT EXISTS ONLINE_ORDERS
+  COMMENT = 'Schema for e-commerce orders and customer data';
+
+-- Create schema in WMS database
+USE DATABASE WOOLWORTHS_WMS_DB;
+CREATE SCHEMA IF NOT EXISTS WAREHOUSE_OPS
+  COMMENT = 'Schema for warehouse operations and inventory management';
+
+-- Create schemas in Data Warehouse (these are the medallion layers)
+USE DATABASE WOOLWORTHS_DW;
+
+CREATE SCHEMA IF NOT EXISTS BRONZE_RAW
+  COMMENT = 'Bronze layer - Raw data from source systems';
+
+CREATE SCHEMA IF NOT EXISTS SILVER_CLEANED
+  COMMENT = 'Silver layer - Cleaned and standardized data';
+
+CREATE SCHEMA IF NOT EXISTS GOLD_ANALYTICS
+  COMMENT = 'Gold layer - Business-ready data for analytics';
+
+
+
+
+  -- Check schemas in Data Warehouse
+USE DATABASE WOOLWORTHS_DW;
+SHOW SCHEMAS;
+
+
+
+-- Switch to the POS database and schema
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+
+-- Create the stores table
+CREATE OR REPLACE TABLE stores (
+    store_id VARCHAR(20) PRIMARY KEY,          -- Unique store ID (like ST001)
+    store_name VARCHAR(255) NOT NULL,          -- Store name (required)
+    store_type VARCHAR(50),                    -- Type: SUPERMARKET, METRO, FRESH
+    address VARCHAR(500),                      -- Street address
+    city VARCHAR(100),                         -- City name
+    state VARCHAR(50),                         -- Australian state
+    postcode VARCHAR(10),                      -- Postcode
+    region VARCHAR(100),                       -- Metro or Regional
+    manager_id VARCHAR(20),                    -- Store manager ID
+    opening_date DATE,                         -- When store opened
+    status VARCHAR(20) DEFAULT 'ACTIVE',       -- ACTIVE or CLOSED
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP() -- When record was created
+);
+
+
+-- Show the structure of your table
+DESCRIBE TABLE stores;
+
+SELECT COUNT(*) FROM stores;
+
+select * from WOOLWORTHS_POS_DB.POS_TRANSACTIONS.STORES;
+
+
+-- Create products table
+CREATE OR REPLACE TABLE products (
+    product_id VARCHAR(20) PRIMARY KEY,        -- Unique product ID
+    sku VARCHAR(50) UNIQUE NOT NULL,          -- Stock Keeping Unit (barcode)
+    product_name VARCHAR(255) NOT NULL,       -- Product name
+    description TEXT,                          -- Product description
+    category VARCHAR(100),                     -- Main category
+    subcategory VARCHAR(100),                  -- Sub category
+    brand VARCHAR(100),                        -- Brand name
+    unit_price DECIMAL(10,2) NOT NULL,        -- Price in dollars.cents
+    cost_price DECIMAL(10,2),                 -- What Woolworths pays
+    status VARCHAR(20) DEFAULT 'ACTIVE',      -- ACTIVE or DISCONTINUED
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    updated_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+
+-- Switch to e-commerce database
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+USE SCHEMA ONLINE_ORDERS;
+
+select * from woolworths_pos_db.pos_transactions.products;
+-- Create customers table
+-- Switch to e-commerce database first
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+USE SCHEMA ONLINE_ORDERS;
+
+-- Create customers table
+CREATE OR REPLACE TABLE customers (
+    customer_id VARCHAR(20) PRIMARY KEY,      -- Unique customer ID
+    email VARCHAR(255) UNIQUE NOT NULL,       -- Email (must be unique)
+    first_name VARCHAR(100) NOT NULL,         -- First name
+    last_name VARCHAR(100) NOT NULL,          -- Last name
+    phone VARCHAR(20),                        -- Phone number
+    address VARCHAR(500),                     -- Home address
+    city VARCHAR(100),                        -- City
+    state VARCHAR(50),                        -- State
+    postcode VARCHAR(10),                     -- Postcode
+    loyalty_number VARCHAR(50) UNIQUE,        -- Rewards card number
+    registration_date DATE,                   -- When they signed up
+    last_login TIMESTAMP,                     -- Last time they logged in
+    status VARCHAR(20) DEFAULT 'ACTIVE',      -- ACTIVE or INACTIVE
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+DESCRIBE TABLE WOOLWORTHS_ECOMM_DB.ONLINE_ORDERS.CUSTOMERS;
+
+SELECT COUNT(*) FROM WOOLWORTHS_ECOMM_DB.ONLINE_ORDERS.CUSTOMERS;
+
+-- Switch to WMS database
+USE DATABASE WOOLWORTHS_WMS_DB;
+USE SCHEMA WAREHOUSE_OPS;
+
+-- Create inventory table
+CREATE OR REPLACE TABLE inventory (
+    inventory_id VARCHAR(30) PRIMARY KEY,     -- Unique inventory record ID
+    product_id VARCHAR(20) NOT NULL,          -- Which product
+    location_id VARCHAR(20) NOT NULL,         -- Which store or warehouse
+    location_type VARCHAR(20) NOT NULL,       -- 'STORE' or 'WAREHOUSE'
+    quantity_on_hand INT NOT NULL DEFAULT 0,  -- How many we have
+    quantity_reserved INT NOT NULL DEFAULT 0, -- How many are reserved for orders
+    minimum_stock_level INT DEFAULT 0,        -- Reorder point
+    maximum_stock_level INT DEFAULT 999999,   -- Max to order
+    reorder_point INT DEFAULT 10,            -- When to reorder
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP() -- When last updated
+);
+
+
+
+
+-- Create a file format for CSV files
+CREATE OR REPLACE FILE FORMAT csv_format
+  TYPE = CSV
+  FIELD_DELIMITER = ','
+  SKIP_HEADER = 1
+  NULL_IF = ('NULL', 'null', '', 'N/A')
+  FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+  ENCODING = 'UTF8';
+
+  -- Create a stage to hold our files
+CREATE OR REPLACE STAGE woolworths_stage
+  FILE_FORMAT = csv_format
+  COMMENT = 'Stage for loading Woolworths data files';
+
+
+
+  -- Check stores data
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+
+SELECT * FROM WOOLWORTHS_POS_DB.POS_TRANSACTIONS.STORES LIMIT 5;
+
+
+  -- Check products data
+SELECT COUNT(*) FROM woolworths_pos_db.pos_transactions.products;
+SELECT * FROM woolworths_pos_db.pos_transactions.products LIMIT 5;
+
+
+  -- Check customer data
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+USE SCHEMA ONLINE_ORDERS;
+SELECT * FROM woolworths_pos_db.pos_transactions.customers LIMIT 5;
+
+
+-- Switch to Data Warehouse Bronze layer
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA BRONZE_RAW;
+
+
+-- Bronze table for POS sales (raw transaction data)
+CREATE OR REPLACE TABLE bronze_pos_sales (
+    transaction_id VARCHAR(20),
+    store_id VARCHAR(20),
+    cashier_id VARCHAR(20),
+    transaction_timestamp TIMESTAMP,
+    subtotal DECIMAL(12,2),
+    tax_amount DECIMAL(10,2),
+    discount_amount DECIMAL(10,2),
+    total_amount DECIMAL(12,2),
+    payment_method VARCHAR(50),
+    receipt_number VARCHAR(50),
+    status VARCHAR(20),
+    source_system VARCHAR(20) DEFAULT 'POS',
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+-- Bronze table for e-commerce orders
+CREATE OR REPLACE TABLE bronze_ecomm_orders (
+    order_id VARCHAR(20),
+    customer_id VARCHAR(20),
+    order_date TIMESTAMP,
+    fulfillment_type VARCHAR(30),
+    delivery_store_id VARCHAR(20),
+    subtotal DECIMAL(12,2),
+    delivery_fee DECIMAL(10,2),
+    tax_amount DECIMAL(10,2),
+    discount_amount DECIMAL(10,2),
+    total_amount DECIMAL(12,2),
+    payment_method VARCHAR(50),
+    payment_status VARCHAR(20),
+    order_status VARCHAR(30),
+    source_system VARCHAR(20) DEFAULT 'ECOMM',
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Bronze table for inventory movements
+CREATE OR REPLACE TABLE bronze_stock_movements (
+    movement_id VARCHAR(30),
+    product_id VARCHAR(20),
+    location_id VARCHAR(20),
+    location_type VARCHAR(20),
+    movement_type VARCHAR(30),
+    reference_id VARCHAR(30),
+    quantity_change INT,
+    previous_quantity INT,
+    new_quantity INT,
+    movement_timestamp TIMESTAMP,
+    reason VARCHAR(255),
+    created_by VARCHAR(100),
+    source_system VARCHAR(20) DEFAULT 'WMS',
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+USE SCHEMA SILVER_CLEANED;
+
+
+CREATE OR REPLACE TABLE dim_product (
+    product_key VARCHAR(30) PRIMARY KEY,      
+    product_id VARCHAR(20) NOT NULL,          -- Business key from source
+    sku VARCHAR(50) NOT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(100),
+    subcategory VARCHAR(100),
+    brand VARCHAR(100),
+    unit_price DECIMAL(10,2),
+    cost_price DECIMAL(10,2),
+    is_active BOOLEAN DEFAULT TRUE,
+    source_system VARCHAR(20),
+    effective_date DATE NOT NULL,            
+    expiry_date DATE DEFAULT TO_DATE('9999-12-31', 'YYYY-MM-DD'),
+    is_current BOOLEAN DEFAULT TRUE,          -- Is this the current version?
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    updated_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE OR REPLACE TABLE dim_location (
+    location_key VARCHAR(30) PRIMARY KEY,
+    location_id VARCHAR(20) NOT NULL,
+    location_name VARCHAR(255) NOT NULL,
+    location_type VARCHAR(20) NOT NULL,       -- 'STORE', 'WAREHOUSE'
+    address VARCHAR(500),
+    city VARCHAR(100),
+    state VARCHAR(50),
+    postcode VARCHAR(10),
+    region VARCHAR(100),
+    manager_id VARCHAR(20),
+    is_active BOOLEAN DEFAULT TRUE,
+    effective_date DATE NOT NULL,
+    expiry_date DATE DEFAULT TO_DATE('9999-12-31', 'YYYY-MM-DD'),
+    is_current BOOLEAN DEFAULT TRUE,
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE OR REPLACE TABLE dim_customer (
+    customer_key VARCHAR(30) PRIMARY KEY,
+    customer_id VARCHAR(20),
+    email VARCHAR(255),
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    full_name VARCHAR(201),                   -- Calculated: first + last name
+    phone VARCHAR(20),
+    city VARCHAR(100),
+    state VARCHAR(50),
+    postcode VARCHAR(10),
+    loyalty_number VARCHAR(50),
+    registration_date DATE,
+    customer_segment VARCHAR(50),             -- Derived: HIGH_VALUE, REGULAR, etc.
+    is_active BOOLEAN DEFAULT TRUE,
+    effective_date DATE NOT NULL,
+    expiry_date DATE DEFAULT TO_DATE('9999-12-31', 'YYYY-MM-DD'),
+    is_current BOOLEAN DEFAULT TRUE,
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+-- Silver: Unified transaction fact (combines POS and e-commerce)
+CREATE OR REPLACE TABLE fact_transactions (
+    transaction_key VARCHAR(30) PRIMARY KEY,
+    transaction_id VARCHAR(20) NOT NULL,
+    transaction_date DATE NOT NULL,
+    transaction_timestamp TIMESTAMP NOT NULL,
+    customer_key VARCHAR(30),                 -- Foreign key to dim_customer
+    location_key VARCHAR(30) NOT NULL,        -- Foreign key to dim_location
+    channel VARCHAR(20) NOT NULL,             -- 'IN_STORE', 'ONLINE', 'CLICK_COLLECT'
+    fulfillment_type VARCHAR(30),             -- 'IMMEDIATE', 'DELIVERY', 'PICKUP'
+    
+    -- Financial measures
+    subtotal DECIMAL(12,2) NOT NULL,
+    tax_amount DECIMAL(10,2) DEFAULT 0,
+    discount_amount DECIMAL(10,2) DEFAULT 0,
+    delivery_fee DECIMAL(10,2) DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL,
+    
+    -- Operational measures
+    item_count INT,                           -- Number of different products
+    total_quantity INT,                       -- Total quantity of all items
+    
+    payment_method VARCHAR(50),
+    transaction_status VARCHAR(30),
+    source_system VARCHAR(20),
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Silver: Current inventory levels (real-time snapshot)
+CREATE OR REPLACE TABLE fact_inventory_current (
+    inventory_key VARCHAR(30) PRIMARY KEY,
+    product_key VARCHAR(30) NOT NULL,         -- Foreign key to dim_product
+    location_key VARCHAR(30) NOT NULL,        -- Foreign key to dim_location
+    quantity_on_hand INT NOT NULL DEFAULT 0,
+    quantity_reserved INT NOT NULL DEFAULT 0,
+    quantity_available INT,                   -- Calculated field
+    minimum_stock_level INT DEFAULT 0,
+    maximum_stock_level INT DEFAULT 999999,
+    reorder_point INT DEFAULT 10,
+    
+    -- Status indicators (calculated)
+    is_in_stock BOOLEAN,
+    is_low_stock BOOLEAN,
+    is_overstocked BOOLEAN,
+    
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+
+USE SCHEMA GOLD_ANALYTICS;
+
+CREATE OR REPLACE VIEW rpt_inventory_availability AS
+SELECT 
+    -- Product Information
+    p.sku,
+    p.product_name,
+    p.category,
+    p.subcategory,
+    p.brand,
+    p.unit_price,
+    
+    -- Location Information
+    l.location_name as store_name,
+    l.city,
+    l.state,
+    l.region,
+    
+    -- Inventory Status
+    i.quantity_on_hand,
+    i.quantity_reserved,
+    i.quantity_available,
+    i.is_in_stock,
+    i.is_low_stock,
+    
+    -- Click & Collect Information
+    CASE 
+        WHEN i.quantity_available > 20 THEN 'Available - Ready in 1 hour'
+        WHEN i.quantity_available > 5 THEN 'Available - Ready in 2 hours'
+        WHEN i.quantity_available > 0 THEN 'Limited Stock - Ready next day'
+        ELSE 'Out of Stock'
+    END as click_collect_status,
+    
+    CASE 
+        WHEN l.location_type = 'STORE' AND i.quantity_available > 0 
+        THEN 'AVAILABLE'
+        WHEN l.location_type = 'STORE' AND i.quantity_available = 0 
+        THEN 'OUT_OF_STOCK'
+        ELSE 'NOT_AVAILABLE'
+    END as availability_status,
+    
+    -- Timestamps
+    i.last_updated,
+    CURRENT_TIMESTAMP() as report_generated
+    
+FROM SILVER_CLEANED.dim_product p
+INNER JOIN SILVER_CLEANED.fact_inventory_current i 
+    ON p.product_key = i.product_key
+INNER JOIN SILVER_CLEANED.dim_location l 
+    ON i.location_key = l.location_key
+WHERE 
+    p.is_current = TRUE 
+    AND l.is_current = TRUE
+    AND l.location_type = 'STORE'
+    AND p.is_active = TRUE
+ORDER BY 
+    l.city, l.location_name, p.category, p.product_name;
+
+
+
+-----------------TESTTING---------------
+
+    -- Check databases
+SHOW DATABASES;
+
+-- Check tables in each database
+USE DATABASE WOOLWORTHS_POS_DB;
+SHOW TABLES;
+
+USE DATABASE WOOLWORTHS_ECOMM_DB;  
+SHOW TABLES;
+
+USE DATABASE WOOLWORTHS_WMS_DB;
+SHOW TABLES;
+
+USE DATABASE WOOLWORTHS_DW;
+SHOW TABLES IN SCHEMA BRONZE_RAW;
+SHOW TABLES IN SCHEMA SILVER_CLEANED;
+SHOW VIEWS IN SCHEMA GOLD_ANALYTICS;
+
+
+
+-- Test stores data
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+SELECT 
+    COUNT(*) as total_stores,
+    COUNT(DISTINCT state) as states_covered,
+    COUNT(DISTINCT city) as cities_covered
+FROM stores;
+
+-- Test products data
+SELECT 
+    COUNT(*) as total_products,
+    COUNT(DISTINCT category) as categories,
+    AVG(unit_price) as average_price
+FROM products;
+
+-- Test customers data
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+USE SCHEMA ONLINE_ORDERS;
+SELECT 
+    COUNT(*) as total_customers,
+    COUNT(DISTINCT state) as customer_states,
+    MIN(registration_date) as earliest_customer,
+    MAX(registration_date) as latest_customer
+FROM woolworths_pos_db.pos_transactions.customers;
+
+
+
+----------------------------------------------------------
+------------TESTING for all data flow--------------------------
+
+
+-- Check for data problems
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+
+-- Products with invalid prices
+SELECT COUNT(*) as products_with_bad_prices 
+FROM products 
+WHERE unit_price <= 0 OR unit_price > 1000;
+
+-- Stores without names
+SELECT COUNT(*) as stores_without_names 
+FROM stores 
+WHERE store_name IS NULL OR store_name = '';
+
+-- Products without categories
+SELECT COUNT(*) as products_without_category
+FROM products 
+WHERE category IS NULL OR category = '';
+
+
+
+-- Update calculated fields
+UPDATE fact_inventory_current 
+SET 
+    quantity_available = quantity_on_hand - quantity_reserved,
+    is_in_stock = (quantity_on_hand - quantity_reserved) > 0,
+    is_low_stock = (quantity_on_hand - quantity_reserved) <= minimum_stock_level,
+    is_overstocked = quantity_on_hand > 100;
+
+
+select * from fact_inventory_current;
+
+
+
+    -- Test our main business report
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+SELECT 
+    product_name,
+    store_name,
+    city,
+    quantity_available,
+    click_collect_status,
+    availability_status
+FROM rpt_inventory_availability
+LIMIT 10;
+
+-- Test that our business rules work correctly
+SELECT 
+    click_collect_status,
+    COUNT(*) as count_of_products,
+FROM rpt_inventory_availability
+GROUP BY click_collect_status;
+
+
+
+---------------------------
+------SYSTEM TESTING-------
+---------------------------
+
+
+-- Scenario: Customer searches for Coca-Cola products in Sydney stores
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+SELECT 
+    product_name,
+    store_name,
+    city,
+    quantity_available,
+    click_collect_status,
+    availability_status
+FROM rpt_inventory_availability
+WHERE 
+    UPPER(product_name) LIKE '%COCA%' 
+    --AND UPPER(city) = 'SYDNEY'
+    AND availability_status = 'AVAILABLE'
+ORDER BY quantity_available DESC;
+
+
+
+--  test: Just show how the system would work
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA SILVER_CLEANED;
+
+-- Showing current inventory
+SELECT 
+    inventory_key,
+    product_key,
+    quantity_on_hand,
+    quantity_available,
+    CASE 
+        WHEN quantity_available > 20 THEN 'Available - Ready in 1 hour'
+        WHEN quantity_available > 5 THEN 'Available - Ready in 2 hours'
+        WHEN quantity_available > 0 THEN 'Limited Stock - Ready next day'
+        ELSE 'Out of Stock'
+    END as current_status,
+    
+    -- Simulating what would happen after selling 2 items
+    quantity_on_hand - 2 as quantity_after_sale,
+    quantity_available - 2 as available_after_sale,
+    CASE 
+        WHEN (quantity_available - 2) > 20 THEN 'Available - Ready in 1 hour'
+        WHEN (quantity_available - 2) > 5 THEN 'Available - Ready in 2 hours'
+        WHEN (quantity_available - 2) > 0 THEN 'Limited Stock - Ready next day'
+        ELSE 'Out of Stock'
+    END as status_after_sale
+    
+FROM fact_inventory_current
+WHERE quantity_on_hand > 2  
+LIMIT 5;
+
+
+
+
+
+
+
+----------------------------------------------------
+
+
+SELECT 
+    click_collect_status,
+    COUNT(*) as count_of_products,
+    AVG(quantity_available) as avg_quantity
+FROM rpt_inventory_availability
+GROUP BY click_collect_status
+ORDER BY avg_quantity DESC;
+
+
+
+
+DROP view rpt_inventory_availability;
+
+
+select * from FACT_INVENTORY_CURRENT;
+
+
+
+-- Step 1: Switch to the correct database and schema
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA SILVER_CLEANED;
+
+-- Step 2: Update all quantities
+UPDATE fact_inventory_current
+SET
+    quantity_on_hand = 1000,
+    quantity_reserved = 0, -- Resetting reserved to 0 is a good idea for a clean slate
+    quantity_available = 1000 - 0, -- Recalculate available quantity
+    last_updated = CURRENT_TIMESTAMP() -- Update the timestamp to show when this reset happened
+;
+
+
+UPDATE fact_inventory_current
+SET
+    quantity_available = 8
+    where inventory_key = 'PR0002_001_ST010_001';
+
+UPDATE fact_inventory_current
+SET
+    quantity_available = 3
+    where inventory_key = 'PR0002_001_ST008_001';
+    
+
+
+SELECT
+    inventory_key,
+    product_key,
+    location_key,
+    quantity_on_hand,
+    quantity_reserved,
+    quantity_available,
+    last_updated
+FROM fact_inventory_current
+LIMIT 10;
+
+
+---------------------------------------DASHBOARD 1---------------------------------------------------------
+
+USE ROLE TRAINING_ROLE;
+USE WAREHOUSE STUDENT_WH;
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+-- Create simple views with sample data built-in to generate dashboard
+CREATE OR REPLACE VIEW DASHBOARD_SALES AS
+SELECT 'Beverages' AS category, 15000 AS sales, 5.2 AS growth_pct
+UNION ALL SELECT 'Bakery', 22000, -2.1
+UNION ALL SELECT 'Dairy', 18000, 8.5
+UNION ALL SELECT 'Snacks', 12000, 12.3
+UNION ALL SELECT 'Produce', 25000, 15.1
+UNION ALL SELECT 'Frozen', 8000, -4.8;
+
+CREATE OR REPLACE VIEW DASHBOARD_INVENTORY AS
+SELECT 
+    l.location_name AS store,
+    SUM(CASE WHEN i.quantity_available > i.reorder_point THEN i.quantity_available ELSE 0 END) AS in_stock,
+    SUM(CASE WHEN i.quantity_available BETWEEN 1 AND i.reorder_point THEN i.quantity_available ELSE 0 END) AS low_stock,
+    COUNT(CASE WHEN i.quantity_available = 0 THEN 1 END) AS out_of_stock,
+    ROUND(SUM(t.total_amount), 2) AS revenue
+FROM WOOLWORTHS_DW.SILVER_CLEANED.dim_location l
+LEFT JOIN WOOLWORTHS_DW.SILVER_CLEANED.fact_inventory_current i 
+    ON l.location_key = i.location_key
+LEFT JOIN WOOLWORTHS_DW.SILVER_CLEANED.fact_transactions t 
+    ON l.location_key = t.location_key
+WHERE l.location_type = 'STORE'
+GROUP BY l.location_name
+ORDER BY revenue DESC;
+
+-- Test queries (these are what we'll use for charts)
+SELECT * FROM DASHBOARD_SALES;
+SELECT * FROM DASHBOARD_INVENTORY;
+
+--------------------------------------------------------------------------
+
+
+
+
+USE ROLE TRAINING_ROLE;
+USE WAREHOUSE STUDENT_WH;
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+-- =================== 1. MONTHLY REVENUE TRENDS ===================
+CREATE OR REPLACE VIEW DASHBOARD_MONTHLY_TRENDS AS
+SELECT 'Jan 2024' AS month, 450000 AS revenue, 18500 AS transactions, 24.30 AS avg_basket
+UNION ALL SELECT 'Feb 2024', 480000, 19200, 25.00
+UNION ALL SELECT 'Mar 2024', 520000, 20800, 25.00
+UNION ALL SELECT 'Apr 2024', 478000, 19100, 25.03
+UNION ALL SELECT 'May 2024', 543000, 21700, 25.02
+UNION ALL SELECT 'Jun 2024', 589000, 23600, 24.96
+UNION ALL SELECT 'Jul 2024', 612000, 24500, 24.98
+UNION ALL SELECT 'Aug 2024', 595000, 23800, 25.00
+UNION ALL SELECT 'Sep 2024', 634000, 25400, 24.96
+UNION ALL SELECT 'Oct 2024', 658000, 26300, 25.01
+UNION ALL SELECT 'Nov 2024', 720000, 28800, 25.00
+UNION ALL SELECT 'Dec 2024', 785000, 31400, 25.00;
+
+-- =================== 2. CUSTOMER SEGMENT ANALYSIS ===================
+CREATE OR REPLACE VIEW DASHBOARD_CUSTOMER_SEGMENTS AS
+SELECT 'Premium' AS segment, 1250 AS customer_count, 850 AS avg_annual_spend, 21.3 AS profit_margin
+UNION ALL SELECT 'Loyalty', 2100, 620, 18.7
+UNION ALL SELECT 'Regular', 4800, 320, 15.2
+UNION ALL SELECT 'Budget', 3200, 180, 12.8;
+
+-- =================== 3. PRODUCT PERFORMANCE MATRIX ===================
+CREATE OR REPLACE VIEW DASHBOARD_PRODUCT_PERFORMANCE AS
+SELECT 'Bakery' AS category, 220000 AS revenue, 45.2 AS profit_margin, 'High Value' AS tier
+UNION ALL SELECT 'Produce', 250000, 28.3, 'Medium Value'
+UNION ALL SELECT 'Beverages', 150000, 25.5, 'Medium Value'
+UNION ALL SELECT 'Dairy', 180000, 18.8, 'Low Margin'
+UNION ALL SELECT 'Snacks', 120000, 35.7, 'High Margin'
+UNION ALL SELECT 'Frozen', 80000, 22.1, 'Low Volume';
+
+-- =================== 4. SUPPLY CHAIN PERFORMANCE ===================
+CREATE OR REPLACE VIEW DASHBOARD_SUPPLY_CHAIN AS
+SELECT 'FreshCorp' AS supplier, 92 AS performance_score, 3.2 AS avg_lead_days, 'Excellent' AS rating
+UNION ALL SELECT 'DairyBest', 88, 2.8, 'Very Good'
+UNION ALL SELECT 'BevTrade', 85, 4.3, 'Good'
+UNION ALL SELECT 'FrozenFood Co', 82, 5.1, 'Fair'
+UNION ALL SELECT 'SnackSupply', 76, 7.5, 'Needs Improvement';
+
+-- =================== 5. STORE PERFORMANCE COMPARISON ===================
+CREATE OR REPLACE VIEW DASHBOARD_STORE_COMPARISON AS
+SELECT 'Melbourne Mall' AS store, 324000 AS revenue, 3800 AS customers, 85.3 AS avg_basket, 'Top Performer' AS rank
+UNION ALL SELECT 'Sydney Central', 285000, 3200, 89.1, 'Strong'
+UNION ALL SELECT 'Brisbane East', 198000, 2400, 82.5, 'Average'
+UNION ALL SELECT 'Perth West', 165000, 1900, 86.8, 'Average'
+UNION ALL SELECT 'Adelaide North', 142000, 1600, 88.8, 'Growth Potential';
+
+-- =================== 6. INVENTORY TURNOVER ANALYSIS ===================
+CREATE OR REPLACE VIEW DASHBOARD_INVENTORY_TURNOVER AS
+SELECT 'Produce' AS category, 18.7 AS turnover_rate, 'Outstanding' AS performance, 1.2 AS stock_weeks
+UNION ALL SELECT 'Dairy', 15.3, 'Excellent', 1.7
+UNION ALL SELECT 'Bakery', 12.5, 'Very Good', 2.1
+UNION ALL SELECT 'Beverages', 8.2, 'Good', 3.2
+UNION ALL SELECT 'Snacks', 6.8, 'Fair', 3.8
+UNION ALL SELECT 'Frozen', 4.2, 'Poor', 6.2;
+
+-- =================== 7. CUSTOMER SATISFACTION BY TIME ===================
+CREATE OR REPLACE VIEW DASHBOARD_SATISFACTION AS
+SELECT 'Weekend' AS time_period, 93.4 AS satisfaction_score, 'Peak Experience' AS status
+UNION ALL SELECT 'Evening (6-9pm)', 91.1, 'Excellent'
+UNION ALL SELECT 'Afternoon (12-6pm)', 89.5, 'Very Good'
+UNION ALL SELECT 'Morning (6-12pm)', 87.2, 'Good'
+UNION ALL SELECT 'Weekday Average', 86.8, 'Good';
+
+
+
+
