@@ -1,0 +1,26 @@
+store_id,store_name,store_type,city,state,region,postcode,status
+ST001,Woolworths Adelaide Central,SUPERMARKET,Adelaide,SA,Regional,2001,ACTIVE
+ST002,Woolworths Perth West,FRESH,Perth,WA,Regional,2002,ACTIVE
+ST003,Woolworths Sydney South,SUPERMARKET,Sydney,NSW,Metro,2003,ACTIVE
+ST004,Woolworths Adelaide East,SUPERMARKET,Adelaide,SA,Regional,2004,ACTIVE
+ST005,Woolworths Canberra East,METRO,Canberra,ACT,Regional,2005,ACTIVE
+ST006,Woolworths Melbourne Central,METRO,Melbourne,VIC,Metro,2006,ACTIVE
+ST007,Woolworths Adelaide Central,FRESH,Adelaide,SA,Regional,2007,ACTIVE
+ST008,Woolworths Brisbane East,SUPERMARKET,Brisbane,QLD,Metro,2008,ACTIVE
+ST009,Woolworths Adelaide Mall,METRO,Adelaide,SA,Regional,2009,ACTIVE
+ST010,Woolworths Perth South,FRESH,Perth,WA,Regional,2010,ACTIVE
+ST011,Woolworths Adelaide South,FRESH,Adelaide,SA,Regional,2011,ACTIVE
+ST012,Woolworths Brisbane Central,SUPERMARKET,Brisbane,QLD,Metro,2012,ACTIVE
+ST013,Woolworths Wollongong Mall,METRO,Wollongong,NSW,Regional,2013,ACTIVE
+ST014,Woolworths Newcastle Central,METRO,Newcastle,NSW,Regional,2014,ACTIVE
+ST015,Woolworths Brisbane Mall,FRESH,Brisbane,QLD,Metro,2015,ACTIVE
+ST016,Woolworths Brisbane Central,FRESH,Brisbane,QLD,Metro,2016,ACTIVE
+ST017,Woolworths Newcastle Central,METRO,Newcastle,NSW,Regional,2017,ACTIVE
+ST018,Woolworths Brisbane Mall,METRO,Brisbane,QLD,Metro,2018,ACTIVE
+ST019,Woolworths Adelaide West,SUPERMARKET,Adelaide,SA,Regional,2019,ACTIVE
+ST020,Woolworths Sydney North,FRESH,Sydney,NSW,Metro,2020,ACTIVE
+ST021,Woolworths Perth South,SUPERMARKET,Perth,WA,Regional,2021,ACTIVE
+ST022,Woolworths Melbourne South,METRO,Melbourne,VIC,Metro,2022,ACTIVE
+ST023,Woolworths Melbourne North,FRESH,Melbourne,VIC,Metro,2023,ACTIVE
+ST024,Woolworths Newcastle Mall,FRESH,Newcastle,NSW,Regional,2024,ACTIVE
+ST025,Woolworths Sydney East,FRESH,Sydney,NSW,Metro,2025,ACTIVE
