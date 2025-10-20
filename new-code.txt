@@ -1,0 +1,967 @@
+-- This tells Snowflake to use your warehouse
+USE WAREHOUSE GORILLA_WH;
+
+-- ===== SECTION 1: CREATE DATABASES =====
+-- Create the Point-of-Sale database (for in-store transactions)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_POS_DB
+  COMMENT = 'Point of Sale system database for in-store transactions';
+
+-- Create the E-commerce database (for online orders)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_ECOMM_DB
+  COMMENT = 'E-commerce platform database for online orders and customers';
+
+-- Create the Warehouse Management database (for inventory tracking)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_WMS_DB
+  COMMENT = 'Warehouse Management System database for inventory and suppliers';
+
+-- Create the Data Warehouse (for analysis and reporting)
+CREATE DATABASE IF NOT EXISTS WOOLWORTHS_DW
+  COMMENT = 'Data warehouse implementing medallion architecture for analytics';
+
+SHOW DATABASES;
+
+
+
+-- ===== SECTION 2: CREATE SCHEMAS =====
+-- Create schema in POS database
+USE DATABASE WOOLWORTHS_POS_DB;
+CREATE SCHEMA IF NOT EXISTS POS_TRANSACTIONS
+  COMMENT = 'Schema for point-of-sale transaction data';
+
+-- Create schema in E-commerce database
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+CREATE SCHEMA IF NOT EXISTS ONLINE_ORDERS
+  COMMENT = 'Schema for e-commerce orders and customer data';
+
+-- Create schema in WMS database
+USE DATABASE WOOLWORTHS_WMS_DB;
+CREATE SCHEMA IF NOT EXISTS WAREHOUSE_OPS
+  COMMENT = 'Schema for warehouse operations and inventory management';
+
+-- Create schemas in Data Warehouse (these are the medallion layers)
+USE DATABASE WOOLWORTHS_DW;
+
+CREATE SCHEMA IF NOT EXISTS BRONZE_RAW
+  COMMENT = 'Bronze layer - Raw data from source systems';
+
+CREATE SCHEMA IF NOT EXISTS SILVER_CLEANED
+  COMMENT = 'Silver layer - Cleaned and standardized data';
+
+CREATE SCHEMA IF NOT EXISTS GOLD_ANALYTICS
+  COMMENT = 'Gold layer - Business-ready data for analytics';
+
+
+-- Check schemas in Data Warehouse
+USE DATABASE WOOLWORTHS_DW;
+SHOW SCHEMAS;
+
+
+
+-- Switch to the POS database and schema
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+
+-- Create the stores table
+CREATE OR REPLACE TABLE stores (
+    store_id VARCHAR(20) PRIMARY KEY,          -- Unique store ID (like ST001)
+    store_name VARCHAR(255) NOT NULL,          -- Store name (required)
+    store_type VARCHAR(50),                    -- Type: SUPERMARKET, METRO, FRESH
+    address VARCHAR(500),                      -- Street address
+    city VARCHAR(100),                         -- City name
+    state VARCHAR(50),                         -- Australian state
+    postcode VARCHAR(10),                      -- Postcode
+    region VARCHAR(100),                       -- Metro or Regional
+    manager_id VARCHAR(20),                    -- Store manager ID
+    opening_date DATE,                         -- When store opened
+    status VARCHAR(20) DEFAULT 'ACTIVE',       -- ACTIVE or CLOSED
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP() -- When record was created
+);
+
+-- Create products table
+CREATE OR REPLACE TABLE products (
+    product_id VARCHAR(20) PRIMARY KEY,        -- Unique product ID
+    sku VARCHAR(50) UNIQUE NOT NULL,          -- Stock Keeping Unit (barcode)
+    product_name VARCHAR(255) NOT NULL,       -- Product name
+    description TEXT,                          -- Product description
+    category VARCHAR(100),                     -- Main category
+    subcategory VARCHAR(100),                  -- Sub category
+    brand VARCHAR(100),                        -- Brand name
+    unit_price DECIMAL(10,2) NOT NULL,        -- Price in dollars.cents
+    cost_price DECIMAL(10,2),                 -- What Woolworths pays
+    status VARCHAR(20) DEFAULT 'ACTIVE',      -- ACTIVE or DISCONTINUED
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    updated_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Switch to e-commerce database
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+USE SCHEMA ONLINE_ORDERS;
+
+-- Create customers table
+CREATE OR REPLACE TABLE customers (
+    customer_id VARCHAR(20) PRIMARY KEY,      -- Unique customer ID
+    email VARCHAR(255) UNIQUE NOT NULL,       -- Email (must be unique)
+    first_name VARCHAR(100) NOT NULL,         -- First name
+    last_name VARCHAR(100) NOT NULL,          -- Last name
+    phone VARCHAR(20),                        -- Phone number
+    address VARCHAR(500),                     -- Home address
+    city VARCHAR(100),                        -- City
+    state VARCHAR(50),                        -- State
+    postcode VARCHAR(10),                     -- Postcode
+    loyalty_number VARCHAR(50) UNIQUE,        -- Rewards card number
+    registration_date DATE,                   -- When they signed up
+    last_login TIMESTAMP,                     -- Last time they logged in
+    status VARCHAR(20) DEFAULT 'ACTIVE',      -- ACTIVE or INACTIVE
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Switch to WMS database
+USE DATABASE WOOLWORTHS_WMS_DB;
+USE SCHEMA WAREHOUSE_OPS;
+
+-- Create inventory table
+CREATE OR REPLACE TABLE inventory (
+    inventory_id VARCHAR(30) PRIMARY KEY,     -- Unique inventory record ID
+    product_id VARCHAR(20) NOT NULL,          -- Which product
+    location_id VARCHAR(20) NOT NULL,         -- Which store or warehouse
+    location_type VARCHAR(20) NOT NULL,       -- 'STORE' or 'WAREHOUSE'
+    quantity_on_hand INT NOT NULL DEFAULT 0,  -- How many we have
+    quantity_reserved INT NOT NULL DEFAULT 0, -- How many are reserved for orders
+    minimum_stock_level INT DEFAULT 0,        -- Reorder point
+    maximum_stock_level INT DEFAULT 999999,   -- Max to order
+    reorder_point INT DEFAULT 10,            -- When to reorder
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP() -- When last updated
+);
+
+
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+SELECT * FROM stores;
+
+USE DATABASE WOOLWORTHS_POS_DB;
+USE SCHEMA POS_TRANSACTIONS;
+SELECT * FROM PRODUCTS;
+
+
+USE DATABASE WOOLWORTHS_ECOMM_DB;
+USE SCHEMA ONLINE_ORDERS;
+SELECT * FROM customers;
+
+USE DATABASE WOOLWORTHS_WMS_DB;
+USE SCHEMA WAREHOUSE_OPS;
+SELECT * FROM inventory
+
+
+
+
+-----------------MEDALLION ARCH---------------
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA BRONZE_RAW;
+
+-- Bronze table for POS sales (raw transaction data)
+CREATE OR REPLACE TABLE bronze_pos_sales (
+    transaction_id VARCHAR(20),
+    store_id VARCHAR(20),
+    cashier_id VARCHAR(20),
+    transaction_timestamp TIMESTAMP,
+    subtotal DECIMAL(12,2),
+    tax_amount DECIMAL(10,2),
+    discount_amount DECIMAL(10,2),
+    total_amount DECIMAL(12,2),
+    payment_method VARCHAR(50),
+    receipt_number VARCHAR(50),
+    status VARCHAR(20),
+    source_system VARCHAR(20) DEFAULT 'POS',
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Bronze table for e-commerce orders
+CREATE OR REPLACE TABLE bronze_ecomm_orders (
+    order_id VARCHAR(20),
+    customer_id VARCHAR(20),
+    order_date TIMESTAMP,
+    fulfillment_type VARCHAR(30),
+    delivery_store_id VARCHAR(20),
+    subtotal DECIMAL(12,2),
+    delivery_fee DECIMAL(10,2),
+    tax_amount DECIMAL(10,2),
+    discount_amount DECIMAL(10,2),
+    total_amount DECIMAL(12,2),
+    payment_method VARCHAR(50),
+    payment_status VARCHAR(20),
+    order_status VARCHAR(30),
+    source_system VARCHAR(20) DEFAULT 'ECOMM',
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Bronze table for inventory movements
+CREATE OR REPLACE TABLE bronze_stock_movements (
+    movement_id VARCHAR(30),
+    product_id VARCHAR(20),
+    location_id VARCHAR(20),
+    location_type VARCHAR(20),
+    movement_type VARCHAR(30),
+    reference_id VARCHAR(30),
+    quantity_change INT,
+    previous_quantity INT,
+    new_quantity INT,
+    movement_timestamp TIMESTAMP,
+    reason VARCHAR(255),
+    created_by VARCHAR(100),
+    source_system VARCHAR(20) DEFAULT 'WMS',
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+-- Switch to Silver layer
+USE SCHEMA SILVER_CLEANED;
+
+-- Silver: Master product dimension (clean, standardized product data)
+CREATE OR REPLACE TABLE dim_product (
+    product_key VARCHAR(30) PRIMARY KEY,      -- Surrogate key (internal ID)
+    product_id VARCHAR(20) NOT NULL,          -- Business key from source
+    sku VARCHAR(50) NOT NULL,
+    product_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(100),
+    subcategory VARCHAR(100),
+    brand VARCHAR(100),
+    unit_price DECIMAL(10,2),
+    cost_price DECIMAL(10,2),
+    is_active BOOLEAN DEFAULT TRUE,
+    source_system VARCHAR(20),
+    effective_date DATE NOT NULL,             -- When this version became effective
+    expiry_date DATE DEFAULT TO_DATE('9999-12-31', 'YYYY-MM-DD'),
+    is_current BOOLEAN DEFAULT TRUE,          -- Is this the current version?
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    updated_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Silver: Location dimension (stores and warehouses combined)
+CREATE OR REPLACE TABLE dim_location (
+    location_key VARCHAR(30) PRIMARY KEY,
+    location_id VARCHAR(20) NOT NULL,
+    location_name VARCHAR(255) NOT NULL,
+    location_type VARCHAR(20) NOT NULL,       -- 'STORE', 'WAREHOUSE'
+    address VARCHAR(500),
+    city VARCHAR(100),
+    state VARCHAR(50),
+    postcode VARCHAR(10),
+    region VARCHAR(100),
+    manager_id VARCHAR(20),
+    is_active BOOLEAN DEFAULT TRUE,
+    effective_date DATE NOT NULL,
+    expiry_date DATE DEFAULT TO_DATE('9999-12-31', 'YYYY-MM-DD'),
+    is_current BOOLEAN DEFAULT TRUE,
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Silver: Customer dimension
+CREATE OR REPLACE TABLE dim_customer (
+    customer_key VARCHAR(30) PRIMARY KEY,
+    customer_id VARCHAR(20),
+    email VARCHAR(255),
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    full_name VARCHAR(201),                   -- Calculated: first + last name
+    phone VARCHAR(20),
+    city VARCHAR(100),
+    state VARCHAR(50),
+    postcode VARCHAR(10),
+    loyalty_number VARCHAR(50),
+    registration_date DATE,
+    customer_segment VARCHAR(50),             -- Derived: HIGH_VALUE, REGULAR, etc.
+    is_active BOOLEAN DEFAULT TRUE,
+    effective_date DATE NOT NULL,
+    expiry_date DATE DEFAULT TO_DATE('9999-12-31', 'YYYY-MM-DD'),
+    is_current BOOLEAN DEFAULT TRUE,
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+-- Silver: Unified transaction fact (combines POS and e-commerce)
+CREATE OR REPLACE TABLE fact_transactions (
+    transaction_key VARCHAR(30) PRIMARY KEY,
+    transaction_id VARCHAR(20) NOT NULL,
+    transaction_date DATE NOT NULL,
+    transaction_timestamp TIMESTAMP NOT NULL,
+    customer_key VARCHAR(30),                 -- Foreign key to dim_customer
+    location_key VARCHAR(30) NOT NULL,        -- Foreign key to dim_location
+    channel VARCHAR(20) NOT NULL,             -- 'IN_STORE', 'ONLINE', 'CLICK_COLLECT'
+    fulfillment_type VARCHAR(30),             -- 'IMMEDIATE', 'DELIVERY', 'PICKUP'
+    
+    -- Financial measures
+    subtotal DECIMAL(12,2) NOT NULL,
+    tax_amount DECIMAL(10,2) DEFAULT 0,
+    discount_amount DECIMAL(10,2) DEFAULT 0,
+    delivery_fee DECIMAL(10,2) DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL,
+    
+    -- Operational measures
+    item_count INT,                           -- Number of different products
+    total_quantity INT,                       -- Total quantity of all items
+    
+    payment_method VARCHAR(50),
+    transaction_status VARCHAR(30),
+    source_system VARCHAR(20),
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- Silver: Current inventory levels (real-time snapshot)
+CREATE OR REPLACE TABLE fact_inventory_current (
+    inventory_key VARCHAR(30) PRIMARY KEY,
+    product_key VARCHAR(30) NOT NULL,         -- Foreign key to dim_product
+    location_key VARCHAR(30) NOT NULL,        -- Foreign key to dim_location
+    quantity_on_hand INT NOT NULL DEFAULT 0,
+    quantity_reserved INT NOT NULL DEFAULT 0,
+    quantity_available INT,                   -- Calculated field
+    minimum_stock_level INT DEFAULT 0,
+    maximum_stock_level INT DEFAULT 999999,
+    reorder_point INT DEFAULT 10,
+    
+    -- Status indicators (calculated)
+    is_in_stock BOOLEAN,
+    is_low_stock BOOLEAN,
+    is_overstocked BOOLEAN,
+    
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+);
+
+
+
+--------------------------------------------check DATA--------
+
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA SILVER_CLEANED;
+SELECT * FROM dim_product;
+SELECT * FROM dim_location
+SELECT * FROM dim_customer
+SELECT * FROM fact_transactions
+SELECT * FROM fact_inventory_current
+
+
+--------------------------GOLD LAYER for C&C-----------------------------------------
+
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.rpt_inventory_availability AS
+SELECT
+  -- Product
+  p.sku,
+  p.product_name,
+  p.category,
+  p.subcategory,
+  p.brand,
+  TRY_TO_DECIMAL(p.unit_price, 10, 2) AS unit_price,
+
+  -- Location
+  l.location_name AS store_name,
+  l.city,
+  l.state,
+  l.region,
+
+  -- Inventory
+  i.quantity_on_hand,
+  i.quantity_reserved,
+  (i.quantity_on_hand - i.quantity_reserved) AS quantity_available,
+  (i.quantity_on_hand - i.quantity_reserved) > 0 AS is_in_stock,
+  (i.quantity_on_hand - i.quantity_reserved) <= i.reorder_point AS is_low_stock,
+
+  -- Click & Collect messaging
+  CASE
+    WHEN (i.quantity_on_hand - i.quantity_reserved) > 20 THEN 'Available - Ready in 1 hour'
+    WHEN (i.quantity_on_hand - i.quantity_reserved) > 5  THEN 'Available - Ready in 2 hours'
+    WHEN (i.quantity_on_hand - i.quantity_reserved) > 0  THEN 'Limited Stock - Ready next day'
+    ELSE 'Out of Stock'
+  END AS click_collect_status,
+
+  CASE
+    WHEN UPPER(l.location_type) IN ('SUPERMARKET','FRESH','METRO')
+         AND (i.quantity_on_hand - i.quantity_reserved) > 0 THEN 'AVAILABLE'
+    WHEN UPPER(l.location_type) IN ('SUPERMARKET','FRESH','METRO')
+         AND NVL((i.quantity_on_hand - i.quantity_reserved),0) = 0 THEN 'OUT_OF_STOCK'
+    ELSE 'NOT_AVAILABLE'
+  END AS availability_status,
+
+  i.last_updated,
+  CURRENT_TIMESTAMP() AS report_generated
+FROM SILVER_CLEANED.fact_inventory_current i
+JOIN SILVER_CLEANED.dim_product p
+  ON p.product_id = i.product_key           
+JOIN SILVER_CLEANED.dim_location l
+  ON l.location_id = i.location_key         
+WHERE
+  COALESCE(p.is_active, TRUE)
+  AND COALESCE(p.is_current, TRUE)
+  AND COALESCE(l.is_active, TRUE)
+  AND COALESCE(l.is_current, TRUE)
+  AND UPPER(l.location_type) IN ('SUPERMARKET','FRESH','METRO')
+ORDER BY l.city, l.location_name, p.category, p.product_name;
+
+
+SELECT * FROM GOLD_ANALYTICS.rpt_inventory_availability LIMIT 20;
+
+----------------------------demand_forecast----------------------------------
+
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+-- Daily store x channel level aggregations with rolling features
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_demand_forecast_features AS
+WITH tx AS (
+  -- Use unified transactions at daily grain
+  SELECT
+    t.transaction_date::DATE AS date,
+    t.location_key,
+    t.channel,
+    SUM(t.item_count)       AS orders,
+    SUM(t.total_quantity)   AS units,
+    SUM(t.total_amount)     AS revenue
+  FROM SILVER_CLEANED.fact_transactions t
+  WHERE t.transaction_status NOT IN ('VOID','CANCELLED')
+  GROUP BY 1,2,3
+),
+loc AS (
+  SELECT location_key, location_name, city, state, region
+  FROM SILVER_CLEANED.dim_location
+  WHERE COALESCE(is_active, TRUE) AND COALESCE(is_current, TRUE)
+)
+SELECT
+  x.date,
+  x.location_key,
+  l.location_name,
+  CAST(NULL AS STRING)     AS product_key,
+  CAST(NULL AS STRING)     AS sku,
+  CAST(NULL AS STRING)     AS product_name,
+  CAST(NULL AS STRING)     AS category,
+  x.channel,
+  x.orders,
+  x.units,
+  x.revenue,
+  CASE WHEN x.units > 0 THEN x.revenue / x.units ELSE NULL END AS avg_price,
+  EXTRACT(DAYOFWEEK FROM x.date) AS dow,
+  EXTRACT(WEEK      FROM x.date) AS week,
+  EXTRACT(MONTH     FROM x.date) AS month,
+  CASE WHEN EXTRACT(DAYOFWEEK FROM x.date) IN (1,7) THEN TRUE ELSE FALSE END AS is_weekend,
+  SUM(x.units)   OVER (PARTITION BY x.location_key, x.channel ORDER BY x.date ROWS BETWEEN 6 PRECEDING  AND CURRENT ROW) AS rolling_7d_units,
+  SUM(x.units)   OVER (PARTITION BY x.location_key, x.channel ORDER BY x.date ROWS BETWEEN 27 PRECEDING AND CURRENT ROW) AS rolling_28d_units,
+  SUM(x.revenue) OVER (PARTITION BY x.location_key, x.channel ORDER BY x.date ROWS BETWEEN 6 PRECEDING  AND CURRENT ROW) AS rolling_7d_revenue,
+  SUM(x.revenue) OVER (PARTITION BY x.location_key, x.channel ORDER BY x.date ROWS BETWEEN 27 PRECEDING AND CURRENT ROW) AS rolling_28d_revenue
+FROM tx x
+JOIN loc l
+  ON x.location_key = l.location_key;
+
+  
+SELECT * FROM GOLD_ANALYTICS.v_demand_forecast_features LIMIT 20;
+---------------------------------------------------------------------------------
+
+
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_customer_behavior AS
+WITH base AS (
+  SELECT
+    t.customer_key,
+    t.location_key,
+    t.channel,
+    t.transaction_date::DATE AS order_date,
+    t.total_quantity         AS units,
+    t.total_amount           AS revenue
+  FROM SILVER_CLEANED.fact_transactions t
+  WHERE t.customer_key IS NOT NULL
+    AND t.transaction_status NOT IN ('VOID','CANCELLED')
+),
+cust AS (
+  SELECT customer_key, full_name AS customer_name, city
+  FROM SILVER_CLEANED.dim_customer
+  WHERE COALESCE(is_active, TRUE) AND COALESCE(is_current, TRUE)
+),
+loc AS (
+  SELECT location_key, location_name
+  FROM SILVER_CLEANED.dim_location
+  WHERE COALESCE(is_active, TRUE) AND COALESCE(is_current, TRUE)
+),
+
+rfm AS (
+  SELECT
+    b.customer_key,
+    MIN(b.order_date)           AS first_order_date,
+    MAX(b.order_date)           AS last_order_date,
+    COUNT(*)                    AS orders,
+    SUM(b.units)                AS units,
+    SUM(b.revenue)              AS revenue
+  FROM base b
+  GROUP BY b.customer_key
+),
+
+-- Channel frequency per customer
+channel_counts AS (
+  SELECT
+    b.customer_key,
+    b.channel,
+    COUNT(*) AS cnt,
+    ROW_NUMBER() OVER (
+      PARTITION BY b.customer_key
+      ORDER BY COUNT(*) DESC, MIN(b.order_date) ASC
+    ) AS rn
+  FROM base b
+  GROUP BY b.customer_key, b.channel
+),
+
+-- Store frequency per customer
+store_counts AS (
+  SELECT
+    b.customer_key,
+    l.location_name,
+    COUNT(*) AS cnt,
+    ROW_NUMBER() OVER (
+      PARTITION BY b.customer_key
+      ORDER BY COUNT(*) DESC, MIN(b.order_date) ASC
+    ) AS rn
+  FROM base b
+  JOIN loc  l ON l.location_key = b.location_key
+  GROUP BY b.customer_key, l.location_name
+)
+
+SELECT
+  r.customer_key,
+  c.customer_name,
+  c.city,
+  r.first_order_date,
+  r.last_order_date,
+  r.orders,
+  r.units,
+  r.revenue,
+  CASE WHEN r.orders > 0 THEN r.revenue / r.orders ELSE NULL END AS aov,
+  DATEDIFF('day', r.last_order_date, CURRENT_DATE())             AS days_since_last,
+  cc.channel       AS preferred_channel,
+  sc.location_name AS preferred_store
+FROM rfm r
+JOIN cust c
+  ON c.customer_key = r.customer_key
+LEFT JOIN channel_counts cc
+  ON cc.customer_key = r.customer_key AND cc.rn = 1
+LEFT JOIN store_counts sc
+  ON sc.customer_key = r.customer_key AND sc.rn = 1;
+
+SELECT * FROM GOLD_ANALYTICS.V_CUSTOMER_BEHAVIOR LIMIT 20;
+
+
+-------------------------------------------------------------------------------------
+
+------------------------------------VIsualisation------------------------------------
+
+-------------------------------------------------------------------------------------
+
+
+
+
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+--------Sales overview by day, channel, store
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_sales_overview AS
+SELECT
+t.transaction_timestamp::DATE AS txn_date,
+t.channel AS channel,
+t.location_key AS location_key,
+l.location_name AS store_name,
+SUM(t.item_count) AS orders,
+SUM(t.total_quantity) AS units,
+SUM(t.subtotal) AS subtotal,
+SUM(t.discount_amount) AS discounts,
+SUM(t.tax_amount) AS tax,
+SUM(t.delivery_fee) AS delivery_fee,
+SUM(t.total_amount) AS revenue,
+CASE WHEN NULLIF(SUM(t.total_quantity), 0) IS NOT NULL
+THEN SUM(t.total_amount) / NULLIF(SUM(t.total_quantity), 0)
+ELSE NULL END AS avg_price_per_unit,
+/* Replace COUNT(*) with SUM(1) to avoid COUNT() syntax issues */
+CASE WHEN NULLIF(SUM(1), 0) IS NOT NULL
+THEN SUM(t.total_amount) / NULLIF(SUM(1), 0)
+ELSE NULL END AS avg_order_value
+FROM SILVER_CLEANED.fact_transactions t
+JOIN SILVER_CLEANED.dim_location l
+ON l.location_key = t.location_key
+WHERE COALESCE(l.is_active, TRUE) = TRUE
+AND COALESCE(l.is_current, TRUE) = TRUE
+AND t.transaction_status NOT IN ('VOID','CANCELLED')
+GROUP BY
+t.transaction_timestamp::DATE,
+t.channel,
+t.location_key,
+l.location_name;
+
+--------Click & Collect daily KPIs
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_click_collect_daily AS
+SELECT
+t.transaction_date::DATE AS date,
+l.location_name AS store_name,
+COUNT(*) AS orders,
+SUM(t.total_amount) AS revenue,
+AVG(t.total_amount) AS avg_order_value
+FROM SILVER_CLEANED.fact_transactions t
+JOIN SILVER_CLEANED.dim_location l
+ON l.location_key = t.location_key
+WHERE t.channel = 'CLICK_COLLECT'
+AND t.transaction_status NOT IN ('VOID','CANCELLED')
+GROUP BY 1,2;
+
+----------Store revenue leaderboard (rolling windows)
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_store_revenue_leaderboard AS
+WITH base AS (
+SELECT
+t.location_key,
+l.location_name AS store_name,
+t.transaction_date::DATE AS date,
+t.total_amount AS revenue,
+t.transaction_id
+FROM SILVER_CLEANED.fact_transactions t
+JOIN SILVER_CLEANED.dim_location l
+ON l.location_key = t.location_key
+WHERE t.transaction_status NOT IN ('VOID','CANCELLED')
+AND COALESCE(l.is_active, TRUE) AND COALESCE(l.is_current, TRUE)
+),
+roll AS (
+SELECT
+location_key,
+store_name,
+date,
+SUM(revenue) OVER (PARTITION BY location_key ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS revenue_7d,
+SUM(revenue) OVER (PARTITION BY location_key ORDER BY date ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS revenue_30d
+FROM (
+SELECT location_key, store_name, date, SUM(revenue) AS revenue
+FROM base
+GROUP BY 1,2,3
+)
+)
+SELECT *
+FROM roll;
+
+------------Sales by category and channel
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_sales_by_category AS
+SELECT
+t.transaction_date::DATE AS date,
+p.category,
+t.channel,
+SUM(t.total_quantity) AS units,
+SUM(t.total_amount) AS revenue,
+SUM(t.discount_amount) AS discounts,
+CASE WHEN SUM(t.total_quantity) > 0 THEN SUM(t.total_amount)/SUM(t.total_quantity) END AS avg_price_per_unit
+FROM SILVER_CLEANED.fact_transactions t
+JOIN SILVER_CLEANED.dim_product p
+ON p.product_id = t.transaction_id -- Note: replace with line-item product key when you have an items fact
+WHERE t.transaction_status NOT IN ('VOID','CANCELLED')
+GROUP BY 1,2,3;
+
+
+
+-----------Customer KPIs and segments
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_customer_kpis AS
+WITH base AS (
+SELECT
+t.customer_key,
+t.location_key,
+t.channel,
+t.transaction_date::DATE AS order_date,
+t.total_quantity AS units,
+t.total_amount AS revenue
+FROM SILVER_CLEANED.fact_transactions t
+WHERE t.customer_key IS NOT NULL
+AND t.transaction_status NOT IN ('VOID','CANCELLED')
+),
+rfm AS (
+SELECT
+b.customer_key,
+SUM(1) AS orders,
+SUM(b.units) AS units,
+SUM(b.revenue) AS revenue,
+MIN(b.order_date) AS first_order_date,
+MAX(b.order_date) AS last_order_date
+FROM base b
+GROUP BY b.customer_key
+),
+recency AS (
+SELECT
+r.customer_key,
+r.first_order_date,
+r.last_order_date,
+r.orders,
+r.units,
+r.revenue,
+DATEDIFF('day', r.last_order_date, CURRENT_DATE()) AS days_since_last,
+CASE
+WHEN DATEDIFF('day', r.last_order_date, CURRENT_DATE()) <= 7 THEN 'ACTIVE_7D'
+WHEN DATEDIFF('day', r.last_order_date, CURRENT_DATE()) <= 30 THEN 'ACTIVE_30D'
+WHEN DATEDIFF('day', r.last_order_date, CURRENT_DATE()) <= 60 THEN 'AT_RISK_60D'
+ELSE 'CHURN_60D_PLUS'
+END AS recency_segment
+FROM rfm r
+),
+channel_counts AS (
+SELECT
+b.customer_key,
+b.channel,
+SUM(1) AS cnt
+FROM base b
+GROUP BY b.customer_key, b.channel
+),
+pref_channel AS (
+SELECT
+customer_key,
+channel,
+cnt,
+ROW_NUMBER() OVER (PARTITION BY customer_key ORDER BY cnt DESC, channel) AS rn
+FROM channel_counts
+),
+store_counts AS (
+SELECT
+b.customer_key,
+l.location_name,
+SUM(1) AS cnt
+FROM base b
+JOIN SILVER_CLEANED.dim_location l
+ON l.location_key = b.location_key
+GROUP BY b.customer_key, l.location_name
+),
+pref_store AS (
+SELECT
+customer_key,
+location_name,
+cnt,
+ROW_NUMBER() OVER (PARTITION BY customer_key ORDER BY cnt DESC, location_name) AS rn
+FROM store_counts
+)
+SELECT
+rec.customer_key,
+dc.full_name AS customer_name,
+dc.city AS customer_city,
+rec.first_order_date,
+rec.last_order_date,
+rec.orders,
+rec.units,
+rec.revenue,
+CASE WHEN rec.orders > 0 THEN rec.revenue / rec.orders ELSE NULL END AS aov,
+rec.days_since_last,
+rec.recency_segment,
+pc.channel AS preferred_channel,
+ps.location_name AS preferred_store
+FROM recency rec
+JOIN SILVER_CLEANED.dim_customer dc
+ON dc.customer_key = rec.customer_key
+LEFT JOIN pref_channel pc
+ON pc.customer_key = rec.customer_key AND pc.rn = 1
+LEFT JOIN pref_store ps
+ON ps.customer_key = rec.customer_key AND ps.rn = 1
+WHERE COALESCE(dc.is_active, TRUE) AND COALESCE(dc.is_current, TRUE);
+
+
+
+---------Inventory Status Overview (Store x Category)----------
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_inventory_status_store_category AS
+SELECT
+    l.location_key,
+    l.location_name        AS store_name,
+    l.city,
+    l.state,
+    l.region,
+    p.category,
+    SUM(i.quantity_on_hand)                  AS total_qty_on_hand,
+    SUM(i.quantity_reserved)                 AS total_qty_reserved,
+    SUM(i.quantity_on_hand - i.quantity_reserved) AS total_qty_available,
+    SUM(i.quantity_on_hand * p.unit_price)   AS total_inventory_value,
+    COUNT(DISTINCT p.product_key)            AS distinct_products
+FROM WOOLWORTHS_DW.SILVER_CLEANED.fact_inventory_current i
+JOIN WOOLWORTHS_DW.SILVER_CLEANED.dim_product p
+  ON i.product_key = p.product_key
+JOIN WOOLWORTHS_DW.SILVER_CLEANED.dim_location l
+  ON i.location_key = l.location_key
+WHERE
+    COALESCE(p.is_active, TRUE)
+    AND COALESCE(p.is_current, TRUE)
+    AND COALESCE(l.is_active, TRUE)
+    AND COALESCE(l.is_current, TRUE)
+    AND UPPER(l.location_type) IN ('SUPERMARKET','FRESH','METRO')
+GROUP BY
+    l.location_key,
+    l.location_name,
+    l.city,
+    l.state,
+    l.region,
+    p.category
+ORDER BY
+    l.location_name,
+    p.category;
+
+
+
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_inventory_store_sku_status AS
+SELECT
+  i.inventory_key,
+  i.product_key,
+  p.sku,
+  p.product_name,
+  p.category,
+  p.subcategory,
+  p.brand,
+  i.location_key,
+  l.location_name              AS store_name,
+  l.city,
+  l.state,
+  l.region,
+  /* Core quantities */
+  i.quantity_on_hand,
+  i.quantity_reserved,
+  COALESCE(i.quantity_available, i.quantity_on_hand - i.quantity_reserved) AS quantity_available,
+  i.minimum_stock_level,
+  i.maximum_stock_level,
+  i.reorder_point,
+  /* Status flags (derived safely if null in fact) */
+  COALESCE(i.is_in_stock,
+           (i.quantity_on_hand - i.quantity_reserved) > 0)                          AS is_in_stock,
+  COALESCE(i.is_low_stock,
+           (i.quantity_on_hand - i.quantity_reserved) <= i.reorder_point)           AS is_low_stock,
+  COALESCE(i.is_overstocked,
+           (i.quantity_on_hand - i.quantity_reserved) > i.maximum_stock_level)      AS is_overstocked,
+  /* Valuation */
+  p.unit_price,
+  TRY_TO_DECIMAL(p.unit_price, 10, 2) * NULLIF(COALESCE(i.quantity_available, i.quantity_on_hand - i.quantity_reserved), 0) AS inventory_value,
+  /* UX-friendly message for Click & Collect / shelves */
+  CASE
+    WHEN COALESCE(i.quantity_available, 0) > 20 THEN 'Available - Ready in 1 hour'
+    WHEN COALESCE(i.quantity_available, 0) > 5  THEN 'Available - Ready in 2 hours'
+    WHEN COALESCE(i.quantity_available, 0) > 0  THEN 'Limited Stock - Ready next day'
+    ELSE 'Out of Stock'
+  END AS availability_message,
+  i.last_updated,
+  CURRENT_TIMESTAMP() AS report_generated
+FROM WOOLWORTHS_DW.SILVER_CLEANED.fact_inventory_current i
+JOIN WOOLWORTHS_DW.SILVER_CLEANED.dim_product  p ON p.product_key  = i.product_key
+JOIN WOOLWORTHS_DW.SILVER_CLEANED.dim_location l ON l.location_key = i.location_key
+WHERE
+  COALESCE(p.is_active, TRUE)   AND COALESCE(p.is_current, TRUE)
+  AND COALESCE(l.is_active, TRUE) AND COALESCE(l.is_current, TRUE)
+  AND UPPER(l.location_type) IN ('SUPERMARKET','FRESH','METRO');
+
+
+------
+USE DATABASE WOOLWORTHS_DW;
+USE SCHEMA GOLD_ANALYTICS;
+
+CREATE OR REPLACE VIEW GOLD_ANALYTICS.v_inventory_store_sku_status AS
+WITH f AS (
+  SELECT
+    TRIM(UPPER(product_key))  AS f_product_key,
+    TRIM(UPPER(location_key)) AS f_location_key,
+    inventory_key,
+    quantity_on_hand,
+    quantity_reserved,
+    COALESCE(quantity_available, quantity_on_hand - quantity_reserved) AS quantity_available,
+    minimum_stock_level,
+    maximum_stock_level,
+    reorder_point,
+    is_in_stock,
+    is_low_stock,
+    is_overstocked,
+    last_updated
+  FROM WOOLWORTHS_DW.SILVER_CLEANED.fact_inventory_current
+),
+-- Try match by product_key (surrogate)
+p_by_key AS (
+  SELECT TRIM(UPPER(product_key)) AS k, *
+  FROM WOOLWORTHS_DW.SILVER_CLEANED.dim_product
+),
+-- Fallback: match fact.product_key to dim.product_id (business id)
+p_by_id AS (
+  SELECT TRIM(UPPER(product_id)) AS k, *
+  FROM WOOLWORTHS_DW.SILVER_CLEANED.dim_product
+),
+-- Locations: match by surrogate key
+l_by_key AS (
+  SELECT TRIM(UPPER(location_key)) AS k, *
+  FROM WOOLWORTHS_DW.SILVER_CLEANED.dim_location
+),
+-- Fallback: match fact.location_key to dim.location_id (business id)
+l_by_id AS (
+  SELECT TRIM(UPPER(location_id)) AS k, *
+  FROM WOOLWORTHS_DW.SILVER_CLEANED.dim_location
+)
+SELECT
+  f.inventory_key,
+  /* Choose whichever product match hits first */
+  COALESCE(pk.product_key,   pi.product_key)   AS product_key,
+  COALESCE(pk.product_id,    pi.product_id)    AS product_id,
+  COALESCE(pk.sku,           pi.sku)           AS sku,
+  COALESCE(pk.product_name,  pi.product_name)  AS product_name,
+  COALESCE(pk.category,      pi.category)      AS category,
+  COALESCE(pk.subcategory,   pi.subcategory)   AS subcategory,
+  COALESCE(pk.brand,         pi.brand)         AS brand,
+  COALESCE(pk.unit_price,    pi.unit_price)    AS unit_price,
+
+  /* Choose whichever location match hits first */
+  COALESCE(lk.location_key,  li.location_key)  AS location_key,
+  COALESCE(lk.location_id,   li.location_id)   AS location_id,
+  COALESCE(lk.location_name, li.location_name) AS store_name,
+  COALESCE(lk.city,          li.city)          AS city,
+  COALESCE(lk.state,         li.state)         AS state,
+  COALESCE(lk.region,        li.region)        AS region,
+  COALESCE(lk.location_type, li.location_type) AS location_type,
+
+  /* Quantities & status */
+  f.quantity_on_hand,
+  f.quantity_reserved,
+  f.quantity_available,
+  f.minimum_stock_level,
+  f.maximum_stock_level,
+  f.reorder_point,
+
+  COALESCE(f.is_in_stock,    f.quantity_available > 0)                          AS is_in_stock,
+  COALESCE(f.is_low_stock,   f.quantity_available <= f.reorder_point)           AS is_low_stock,
+  COALESCE(f.is_overstocked, f.quantity_available > f.maximum_stock_level)      AS is_overstocked,
+
+  /* Valuation */
+  TRY_TO_DECIMAL(COALESCE(pk.unit_price, pi.unit_price), 10, 2)
+    * NULLIF(f.quantity_available, 0) AS inventory_value,
+
+  /* UX message */
+  CASE
+    WHEN COALESCE(f.quantity_available, 0) > 20 THEN 'Available - Ready in 1 hour'
+    WHEN COALESCE(f.quantity_available, 0) > 5  THEN 'Available - Ready in 2 hours'
+    WHEN COALESCE(f.quantity_available, 0) > 0  THEN 'Limited Stock - Ready next day'
+    ELSE 'Out of Stock'
+  END AS availability_message,
+
+  f.last_updated,
+  CURRENT_TIMESTAMP() AS report_generated,
+
+  /* Debug columns to see what matched (drop later) */
+  CASE WHEN pk.product_key IS NOT NULL THEN 'BY_PRODUCT_KEY'
+       WHEN pi.product_key IS NOT NULL THEN 'BY_PRODUCT_ID'
+       ELSE 'NO_PRODUCT_MATCH' END AS product_match_mode,
+  CASE WHEN lk.location_key IS NOT NULL THEN 'BY_LOCATION_KEY'
+       WHEN li.location_key IS NOT NULL THEN 'BY_LOCATION_ID'
+       ELSE 'NO_LOCATION_MATCH' END AS location_match_mode
+
+FROM f
+LEFT JOIN p_by_key pk ON pk.k = f.f_product_key
+LEFT JOIN p_by_id  pi ON pi.k = f.f_product_key
+LEFT JOIN l_by_key lk ON lk.k = f.f_location_key
+LEFT JOIN l_by_id  li ON li.k = f.f_location_key
+
+-- Keep only rows that have at least one product AND one location match
+WHERE
+  (pk.product_key IS NOT NULL OR pi.product_key IS NOT NULL)
+  AND (lk.location_key IS NOT NULL OR li.location_key IS NOT NULL)
+  AND COALESCE(COALESCE(pk.is_active, pi.is_active), TRUE)
+  AND COALESCE(COALESCE(pk.is_current, pi.is_current), TRUE)
+  AND COALESCE(COALESCE(lk.is_active, li.is_active), TRUE)
+  AND COALESCE(COALESCE(lk.is_current, li.is_current), TRUE);
